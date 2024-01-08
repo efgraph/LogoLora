@@ -101,8 +101,8 @@ terminado==0.18.0
 tinycss2==1.2.1
 tokenizers==0.15.0
 tomli==2.0.1
-torch==2.0.1+cu117
-torchvision==0.15.2+cu117
+torch==2.0.1
+torchvision==0.15.2
 tornado==6.4
 tqdm==4.66.1
 traitlets==5.14.1
