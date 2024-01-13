@@ -1,12 +1,13 @@
 from aiogram import Router, html
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import Message, URLInputFile
 from sqlalchemy import select, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from bot.handlers.callbacks import post_request
 from bot.db.models import UserPrompt
 from bot.keyboards import generate_prompts, generate_scores
+from bot.config_reader import config
 
 router = Router(name="commands-router")
 
@@ -25,6 +26,7 @@ async def cmd_start(message: Message):
         
 /howto - show commands description
 /generate - generate logo with prompts
+/logo_type - type your prompt to generate logo
 /clear - clear all history of logos generation
 /rate - rate logo with offset in an argument
 /history - view generated logo with offset in an argument
@@ -36,6 +38,29 @@ async def cmd_start(message: Message):
 @router.message(Command("generate"))
 async def cmd_generate(message: Message):
     await message.answer("Design logo for", reply_markup=generate_prompts())
+
+
+@router.message(Command("logo_type"))
+async def logo_type_generate(message: Message, session: AsyncSession):
+    prompt_text = message.text.split('/logo_type')[1]
+    if len(prompt_text.strip()) < 10:
+        await message.answer('Too short for the logo prompt, try more!')
+    else:
+        prompt = UserPrompt(id=message.message_id, user_id=message.from_user.id, prompt=prompt_text)
+        await message.answer(f'Generating logo by prompt: {prompt.prompt}')
+
+        data = await post_request(prompt.prompt)
+
+        image = URLInputFile(f"{config.api_logo}{data['images'][0]}")
+
+        result = await message.answer_photo(
+            image,
+            caption="Generated logo"
+        )
+        prompt.file_id = result.photo[-1].file_id
+        await session.merge(prompt)
+        await session.commit()
+        await session.close()
 
 
 @router.message(Command("history"))

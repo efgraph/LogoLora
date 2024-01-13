@@ -5,6 +5,7 @@ from aiogram.types import BotCommandScopeAllPrivateChats, BotCommand
 async def set_ui_commands(bot: Bot):
     commands = [
         BotCommand(command="generate", description="Generate logo with prompts"),
+        BotCommand(command="logo_type", description="Type your prompt to generate logo"),
         BotCommand(command="clear", description="Clear generation history"),
         BotCommand(command="howto", description="Describe bot commands"),
         BotCommand(command="rate", description="Rate logo with offset"),
