@@ -1,0 +1,28 @@
+defaults: &defaults
+  pretrained_model_name_or_path: stabilityai/stable-diffusion-2-1
+  dataset_name: logo-wizard/modern-logo-dataset
+  resume_from_checkpoint: latest
+  dataloader_num_workers: 8
+  resolution: 768
+  center_crop: true
+  random_flip: true
+  train_batch_size: 2
+  gradient_accumulation_steps: 8
+  max_train_steps: 1000
+  learning_rate: 2e-5
+  max_grad_norm: 0.5
+  gradient_checkpointing: true
+  lr_scheduler: cosine
+  lr_warmup_steps: 1000
+  output_dir: logo_lora
+  checkpointing_steps: 500
+  seed: 1337
+  report_to: tensorboard
+  logging_dir: logs
+  num_validation_images: 2
+  validation_epochs: 1
+  validation_prompt: "a logo of coffee shop, image of a filled cup with steam, white background, black, darkgray foreground, modern, minimalism, vector art, 2d, best quality, centered"
+  validation_negative_prompt: "low quality, worst quality, bad composition, extra digit, fewer digits, text, inscription, watermark, label, asymmetric"
+
+config:
+  <<: *defaults
