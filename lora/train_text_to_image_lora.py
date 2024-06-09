@@ -22,7 +22,7 @@ import os
 import random
 import shutil
 from pathlib import Path
-
+from PIL import Image
 import datasets
 import numpy as np
 import torch
@@ -43,6 +43,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 
 import diffusers
 from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, StableDiffusionPipeline, UNet2DConditionModel
+from diffusers import DDIMScheduler, EulerAncestralDiscreteScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import cast_training_params, compute_snr
 from diffusers.utils import check_min_version, convert_state_dict_to_diffusers, is_wandb_available
@@ -55,6 +56,19 @@ from diffusers.utils.torch_utils import is_compiled_module
 check_min_version("0.27.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
+
+
+def get_custom_scheduler(pretrained_model_name_or_path):
+    try:
+        scheduler = EulerAncestralDiscreteScheduler.from_pretrained(pretrained_model_name_or_path)
+        logger.info("Using EulerAncestralDiscreteScheduler.")
+    except Exception as e:
+        logger.warning(f"Failed to load EulerAncestralDiscreteScheduler: {e}")
+        scheduler = DDIMScheduler()
+        scheduler.config.steps_offset = 1
+        scheduler.config.clip_sample = False
+        logger.info("Using customized DDIMScheduler with clip_sample set to False.")
+    return scheduler
 
 
 def save_model_card(
@@ -372,6 +386,13 @@ def parse_args():
         help=("The dimension of the LoRA update matrices."),
     )
 
+    parser.add_argument(
+        "--validation_negative_prompt",
+        type=str,
+        default="low quality, worst quality, bad composition, extra digit, fewer digits, text, inscription, watermark, label, asymmetric",
+        help="A negative prompt that is used during validation to guide the model away from undesirable outputs."
+    )
+
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
     if env_local_rank != -1 and env_local_rank != args.local_rank:
@@ -442,7 +463,7 @@ def main():
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
     # Load scheduler, tokenizer and models.
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
+    noise_scheduler = get_custom_scheduler(args.pretrained_model_name_or_path)
     tokenizer = CLIPTokenizer.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="tokenizer", revision=args.revision
     )
@@ -859,15 +880,17 @@ def main():
             if args.validation_prompt is not None and epoch % args.validation_epochs == 0:
                 logger.info(
                     f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
-                    f" {args.validation_prompt}."
+                    f" {args.validation_prompt} and negative prompt: {args.validation_negative_prompt}."
                 )
                 # create pipeline
+                scheduler = get_custom_scheduler(args.pretrained_model_name_or_path)
                 pipeline = DiffusionPipeline.from_pretrained(
                     args.pretrained_model_name_or_path,
                     unet=unwrap_model(unet),
                     revision=args.revision,
                     variant=args.variant,
                     torch_dtype=weight_dtype,
+                    scheduler=scheduler,
                 )
                 pipeline = pipeline.to(accelerator.device)
                 pipeline.set_progress_bar_config(disable=True)
@@ -879,9 +902,27 @@ def main():
                 images = []
                 with torch.cuda.amp.autocast():
                     for _ in range(args.num_validation_images):
-                        images.append(
-                            pipeline(args.validation_prompt, num_inference_steps=30, generator=generator).images[0]
-                        )
+                        image_output = pipeline(
+                            args.validation_prompt,
+                            num_inference_steps=30,
+                            guidance_scale=7.5,
+                            height=768,
+                            width=768,
+                            generator=generator,
+                            negative_prompt=args.validation_negative_prompt
+                        ).images[0]
+
+                        image_tensor = torch.tensor(np.array(image_output), dtype=torch.float32)
+
+                        if torch.isnan(image_tensor).any() or torch.isinf(image_tensor).any():
+                            logger.error("NaN or Inf found in the generated image!")
+                            continue
+
+                        image_tensor = torch.clamp(image_tensor / 255.0, 0, 1)
+
+                        image_output = Image.fromarray((image_tensor.numpy() * 255).astype('uint8'))
+
+                        images.append(image_output)
 
                 for tracker in accelerator.trackers:
                     if tracker.name == "tensorboard":
